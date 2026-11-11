@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Піаніно-тренер</title>
+<style>
+/* Layout: one column; status line on top, falling-notes canvas fills the middle, controls below. */
+:root{
+  --bg:#f3f4f6; --card:#ffffff; --fg:#1b1f26; --muted:#5d6572; --line:#d6d9df;
+  --accent:#2c5bd6; --accent-fg:#ffffff; --ok:#1c8a4a; --key:#fdfdfb; --keyb:#22262c; --warn:#b4570a;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#13161b; --card:#1b1f26; --fg:#e8eaee; --muted:#9aa3b0; --line:#2e343d;
+    --accent:#6f95f5; --accent-fg:#0d1117; --ok:#46c27a; --key:#e9e9e4; --keyb:#0e1013; --warn:#f0a050;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--fg);
+  font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding-block:12px;
+  padding-left:max(14px, env(safe-area-inset-left, 0px));
+  padding-right:max(14px, env(safe-area-inset-right, 0px));
+}
+main{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+h1{font-size:1.25rem;margin:0;letter-spacing:.01em}
+.sub{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.now{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#target{font-size:2rem;font-weight:700;font-variant-numeric:tabular-nums;min-width:0}
+#prog{color:var(--muted);font-variant-numeric:tabular-nums}
+canvas{width:100%;height:min(58vh,480px);display:block;border:1px solid var(--line);border-radius:8px;background:var(--card);touch-action:manipulation}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button,select,textarea,input[type=file]{font:inherit;color:var(--fg)}
+button{
+  padding:10px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);cursor:pointer;min-height:44px
+}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.panel label{font-size:.85rem;color:var(--muted)}
+select,textarea{width:100%;padding:9px;border-radius:8px;border:1px solid var(--line);background:var(--bg)}
+textarea{min-height:76px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9rem}
+.tracks{display:flex;flex-direction:column;gap:6px}
+.tracks label{display:flex;gap:8px;align-items:center;color:var(--fg);font-size:.95rem}
+.meter{display:flex;align-items:center;gap:10px;font-size:.9rem;color:var(--muted)}
+.bar{flex:1;height:8px;background:var(--line);border-radius:4px;overflow:hidden;min-width:60px}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .08s}
+#msg{min-height:1.4em;font-size:.92rem}
+#msg.err{color:var(--warn)}
+.hint{color:var(--muted);font-size:.85rem;margin:0}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Піаніно-тренер</h1>
+    <p class="sub">Ноти падають на клавіші. Програма чекає, поки ти зіграєш потрібну ноту.</p>
+  </header>
+
+  <section class="now" aria-live="polite">
+    <div id="target">—</div>
+    <div id="prog"></div>
+  </section>
+
+  <canvas id="cv" aria-label="Падаючі ноти та клавіатура"></canvas>
+
+  <section class="row">
+    <button id="micBtn" class="primary">Увімкнути мікрофон</button>
+    <button id="backBtn">‹ Назад</button>
+    <button id="skipBtn">Пропустити ›</button>
+    <button id="restartBtn">Спочатку</button>
+  </section>
+  <div class="meter"><span id="heard">Чую: —</span><div class="bar"><i id="lvl"></i></div></div>
+  <div id="msg"></div>
+
+  <section class="panel">
+    <div>
+      <label for="piece">Що грати</label>
+      <select id="piece">
+        <option value="ode">Ода радості (початок)</option>
+        <option value="scale">Гама До мажор</option>
+        <option value="text">Свої ноти (текстом)</option>
+        <option value="midi">MIDI-файл</option>
+      </select>
+    </div>
+    <div id="textPanel" hidden>
+      <label for="notesText">Ноти через пробіл: C4 E4 G4. Акорд через +: C4+E4+G4. Тривалість після /: E4/2. Пауза: R/1.</label>
+      <textarea id="notesText" spellcheck="false">E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4 E4 E4/1.5 D4/.5 D4/2</textarea>
+      <div class="row"><button id="applyText">Застосувати</button></div>
+    </div>
+    <div id="midiPanel" hidden>
+      <label for="midiFile">Файл .mid для фортепіано</label>
+      <input id="midiFile" type="file" accept=".mid,.midi,audio/midi,audio/x-midi">
+      <div id="tracks" class="tracks"></div>
+    </div>
+  </section>
+
+  <p class="hint">Грай із динаміків піаніно, телефон постав поруч із ним. Мікрофон шукає потрібну ноту за звуком, тому дуже низькі ноти (нижче C3) і швидкі акорди він може пропускати. Тоді тисни «Пропустити».
+  Без мікрофона можна торкатися клавіш на екрані, щоб перевірити, як усе працює.</p>
+</main>
+
+<script>
+// ==DETECT-START==
+const T = 10; // dB above the surrounding floor that counts as "this note is sounding"
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function midiName(m){ return NAMES[m % 12] + (Math.floor(m / 12) - 1); }
+function freq(m){ return 440 * Math.pow(2, (m - 69) / 12); }
+
+// Contrast (dB) of the first four harmonics of a note against their neighbourhood.
+// A peak only counts if it is a real local maximum: the skirt of a neighbouring semitone is not.
+function contrast(db, sr, fftSize, midi){
+  const f0 = freq(midi), bw = sr / fftSize, c = [], p = [];
+  for (let h = 1; h <= 4; h++){
+    const f = f0 * h;
+    if (f * 1.2 > sr / 2){ c.push(-99); p.push(-200); continue; }
+    const lo = Math.max(2, Math.round(f * 0.985 / bw)), hi = Math.max(lo, Math.round(f * 1.015 / bw));
+    let peak = -Infinity, pk = lo;
+    for (let i = lo; i <= hi; i++) if (db[i] > peak){ peak = db[i]; pk = i; }
+    p.push(peak);
+    if (db[pk] < db[pk - 2] || db[pk] < db[pk + 2]){ c.push(-99); continue; }
+    let sum = 0, n = 0;
+    const a = Math.round(f * 0.86 / bw), b = Math.round(f * 0.95 / bw);
+    const e = Math.round(f * 1.05 / bw), d = Math.round(f * 1.16 / bw);
+    for (let i = a; i <= b; i++){ sum += db[i]; n++; }
+    for (let i = e; i <= d; i++){ sum += db[i]; n++; }
+    c.push(n ? peak - sum / n : -99);
+  }
+  return { c, p };
+}
+
+// Score of "midi is sounding": fundamental, or 2nd and 3rd harmonics together.
+// If the note an octave below is sounding and this note's peak is not clearly louder than it,
+// the energy is just that lower note's 2nd harmonic, so reject (unless the lower note is expected too).
+function noteScore(db, sr, fftSize, midi, expected){
+  const x = contrast(db, sr, fftSize, midi), c = x.c;
+  let s = Math.max(c[0], Math.min(c[1], c[2]));
+  if (midi - 12 >= 21 && !expected.has(midi - 12)){
+    const lo = contrast(db, sr, fftSize, midi - 12);
+    if (lo.c[0] >= T && x.p[0] < lo.p[0] + 2) s = Math.min(s, 0);
+  }
+  return s;
+}
+
+// Loudest spectral peak between 80 and 2200 Hz, as a note name (for the "Чую" line).
+function dominant(db, sr, fftSize){
+  const bw = sr / fftSize;
+  const a = Math.round(80 / bw), b = Math.round(2200 / bw);
+  let best = -Infinity, bi = -1;
+  for (let i = a; i <= b; i++) if (db[i] > best){ best = db[i]; bi = i; }
+  if (bi < 1 || best < -85) return null;
+  const y0 = db[bi-1], y1 = db[bi], y2 = db[bi+1];
+  const dd = 0.5 * (y0 - y2) / (y0 - 2*y1 + y2);
+  const f = (bi + (isFinite(dd) ? dd : 0)) * bw;
+  return { midi: Math.round(69 + 12 * Math.log2(f / 440)), db: best };
+}
+// ==DETECT-END==
+
+/* ---------- Pieces ---------- */
+function parseNote(tok){
+  const m = /^([A-Ga-g])([#b]?)(-?\d)$/.exec(tok);
+  if (!m) return null;
+  const base = {C:0,D:2,E:4,F:5,G:7,A:9,B:11}[m[1].toUpperCase()];
+  return (parseInt(m[3], 10) + 1) * 12 + base + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
+}
+function parseText(text){
+  const steps = []; let beat = 0;
+  for (const tok of text.trim().split(/\s+/).filter(Boolean)){
+    const parts = tok.split('/'); const dur = parts[1] ? parseFloat(parts[1]) : 1;
+    if (!(dur > 0)) throw new Error('Не розумію тривалість: ' + tok);
+    if (parts[0].toUpperCase() === 'R'){ beat += dur; continue; }
+    const notes = parts[0].split('+').map(parseNote);
+    if (notes.some(n => n == null || n < 21 || n > 108)) throw new Error('Не розумію ноту: ' + tok);
+    steps.push({ beat, dur, notes: [...new Set(notes)].sort((x, y) => x - y) });
+    beat += dur;
+  }
+  if (!steps.length) throw new Error('Немає нот');
+  return steps;
+}
+const PRESETS = {
+  ode: 'E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4 E4 E4/1.5 D4/.5 D4/2',
+  scale: 'C4 D4 E4 F4 G4 A4 B4 C5'
+};
+
+/* ---------- MIDI file ---------- */
+function parseMidi(buf){
+  const dv = new DataView(buf); let p = 0;
+  const str = n => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(dv.getUint8(p++)); return s; };
+  const vlq = () => { let v = 0, b; do { b = dv.getUint8(p++); v = (v << 7) | (b & 127); } while (b & 128); return v; };
+  if (str(4) !== 'MThd') throw new Error('Це не MIDI-файл');
+  p += 4; p += 2;
+  const ntr = dv.getUint16(p); p += 2;
+  const div = dv.getUint16(p); p += 2;
+  if (div & 0x8000) throw new Error('Цей тип часу в MIDI не підтримується');
+  const tracks = [];
+  for (let t = 0; t < ntr; t++){
+    if (str(4) !== 'MTrk') throw new Error('Пошкоджений MIDI-файл');
+    const len = dv.getUint32(p); p += 4;
+    const end = p + len; let tick = 0, run = 0, name = '';
+    const open = {}, notes = [];
+    while (p < end){
+      tick += vlq();
+      let st = dv.getUint8(p);
+      if (st & 0x80){ p++; if (st < 0xF0) run = st; } else st = run;
+      if (st === 0xFF){
+        const type = dv.getUint8(p++); const l = vlq();
+        if (type === 3){ name = ''; for (let i = 0; i < l; i++) name += String.fromCharCode(dv.getUint8(p + i)); }
+        p += l;
+      } else if (st === 0xF0 || st === 0xF7){
+        p += vlq();
+      } else {
+        const type = st & 0xF0, ch = st & 15;
+        const a = dv.getUint8(p++);
+        const b = (type === 0xC0 || type === 0xD0) ? 0 : dv.getUint8(p++);
+        const key = ch * 128 + a;
+        if (type === 0x90 && b > 0){ if (open[key] == null) open[key] = tick; }
+        else if (type === 0x80 || (type === 0x90 && b === 0)){
+          if (open[key] != null){ if (ch !== 9) notes.push({ midi: a, start: open[key], dur: tick - open[key] }); delete open[key]; }
+        }
+      }
+    }
+    p = end;
+    if (notes.length) tracks.push({ name: name || ('Доріжка ' + (tracks.length + 1)), notes });
+  }
+  return { div, tracks };
+}
+function stepsFromTracks(div, tracks){
+  const all = tracks.flatMap(t => t.notes).sort((a, b) => a.start - b.start || a.midi - b.midi);
+  const tol = div / 8, groups = [];
+  for (const n of all){
+    const g = groups[groups.length - 1];
+    if (g && n.start - g.start <= tol){ g.notes.add(n.midi); g.dur = Math.max(g.dur, n.dur); }
+    else groups.push({ start: n.start, notes: new Set([n.midi]), dur: n.dur });
+  }
+  return groups.map(g => ({ beat: g.start / div, dur: Math.max(g.dur / div, 0.25), notes: [...g.notes].sort((a, b) => a - b) }));
+}
+
+/* ---------- State ---------- */
+const $ = id => document.getElementById(id);
+let steps = parseText(PRESETS.ode), idx = 0, offset = 0;
+let midiData = null;
+let ctx = null, an = null, buf = null;
+const hist = {}, hitAt = {}, simAt = {};
+let lastAdv = 0, flashAt = 0, heardMidi = null;
+
+function setMsg(t, err){ $('msg').textContent = t || ''; $('msg').className = err ? 'err' : ''; }
+function stepLabel(s){ return s.notes.map(midiName).join(' + '); }
+function updateUI(){
+  if (idx >= steps.length){ $('target').textContent = 'Готово!'; $('prog').textContent = steps.length + ' з ' + steps.length; return; }
+  $('target').textContent = 'Зіграй: ' + stepLabel(steps[idx]);
+  $('prog').textContent = 'Крок ' + (idx + 1) + ' з ' + steps.length;
+}
+function setSteps(s){
+  steps = s; idx = 0; offset = steps[0].beat;
+  for (const k in hist) delete hist[k];
+  for (const k in hitAt) delete hitAt[k];
+  updateUI();
+}
+function goTo(i){
+  idx = Math.max(0, Math.min(steps.length, i));
+  for (const k in hist) delete hist[k];
+  for (const k in hitAt) delete hitAt[k];
+  lastAdv = performance.now();
+  updateUI();
+}
+
+/* ---------- Matching ---------- */
+function advance(){
+  const prev = new Set(steps[idx].notes);
+  idx++; lastAdv = performance.now(); flashAt = lastAdv;
+  if (idx < steps.length){
+    for (const m of steps[idx].notes) if (!prev.has(m)) hist[m] = [];
+  }
+  for (const k in hitAt) delete hitAt[k];
+  updateUI();
+}
+function noteOk(m, prevSet){
+  const h = hist[m] || [], n = h.length;
+  if (n < 2 || h[n-1] < T || h[n-2] < T) return false;
+  if (prevSet.has(m)){
+    const base = Math.min(...h.slice(0, n - 1));
+    return h[n-1] - base >= 6;
+  }
+  return true;
+}
+function analyse(){
+  if (!an || idx >= steps.length) return;
+  an.getFloatFrequencyData(buf);
+  const sr = ctx.sampleRate, fs = an.fftSize;
+  const d = dominant(buf, sr, fs);
+  heardMidi = d ? d.midi : null;
+  $('heard').textContent = 'Чую: ' + (d ? midiName(d.midi) : '—');
+  $('lvl').style.width = d ? Math.max(0, Math.min(100, (d.db + 100) / 70 * 100)) + '%' : '0%';
+  const step = steps[idx], set = new Set(step.notes);
+  const prev = idx > 0 ? new Set(steps[idx - 1].notes) : new Set();
+  const now = performance.now();
+  for (const m of step.notes){
+    const s = noteScore(buf, sr, fs, m, set);
+    const h = (hist[m] = hist[m] || []); h.push(s); if (h.length > 8) h.shift();
+    if (now - lastAdv > 350 && noteOk(m, prev)) hitAt[m] = now;
+  }
+}
+function checkStep(){
+  if (idx >= steps.length) return;
+  const now = performance.now();
+  if (now - lastAdv < 350) return;
+  const ok = steps[idx].notes.every(m => (hitAt[m] && now - hitAt[m] < 1500) || (simAt[m] && now - simAt[m] < 600));
+  if (ok) advance();
+}
+
+/* ---------- Microphone ---------- */
+async function startMic(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setMsg('Цей спосіб відкриття сторінки не дає доступу до мікрофона. Відкрий файл у браузері Chrome.', true); return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') await ctx.resume();
+    const src = ctx.createMediaStreamSource(stream);
+    an = ctx.createAnalyser(); an.fftSize = 8192; an.smoothingTimeConstant = 0; an.minDecibels = -120; an.maxDecibels = 0;
+    src.connect(an); buf = new Float32Array(an.frequencyBinCount);
+    $('micBtn').textContent = 'Мікрофон увімкнено'; $('micBtn').disabled = true;
+    setMsg('Слухаю. Зіграй позначену ноту.');
+  } catch (e){
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    setMsg(denied ? 'Мікрофон заблоковано. Дозволь доступ у браузері (значок біля адреси) і натисни кнопку ще раз.' : 'Не вдалося увімкнути мікрофон: ' + (e && e.message || e), true);
+  }
+}
+
+/* ---------- Drawing ---------- */
+const cv = $('cv'), g = cv.getContext('2d');
+let W = 0, H = 0;
+function resize(){
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  W = r.width; H = r.height;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+const isWhite = m => [0,2,4,5,7,9,11].includes(m % 12);
+function layout(){
+  let mn = 127, mx = 0;
+  for (const s of steps) for (const m of s.notes){ mn = Math.min(mn, m); mx = Math.max(mx, m); }
+  let lo = Math.floor((mn - 1) / 12) * 12, hi = Math.ceil((mx + 2) / 12) * 12 - 1;
+  while (hi - lo + 1 < 24){ hi += 12; if (hi - lo + 1 < 24) lo -= 12; }
+  lo = Math.max(24, lo); hi = Math.min(107, hi);
+  return { lo, hi };
+}
+let L = layout();
+function geometry(){
+  let whites = 0; const idxOf = {};
+  for (let m = L.lo; m <= L.hi; m++){ if (isWhite(m)) idxOf[m] = whites++; }
+  const w = W / whites, kh = Math.min(120, H * 0.26), bw = w * 0.6;
+  const rect = m => {
+    if (isWhite(m)) return { x: idxOf[m] * w, w, black: false };
+    const left = idxOf[m - 1];
+    return { x: (left + 1) * w - bw / 2, w: bw, black: true };
+  };
+  return { w, kh, bw, rect };
+}
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function draw(){
+  g.clearRect(0, 0, W, H);
+  const geo = geometry(), hitY = H - geo.kh;
+  const col = { fg: css('--fg'), muted: css('--muted'), line: css('--line'), accent: css('--accent'), ok: css('--ok'), key: css('--key'), keyb: css('--keyb') };
+  const now = performance.now();
+  const target = idx < steps.length ? steps[idx].beat : (steps[steps.length - 1].beat + 1);
+  offset += (target - offset) * 0.14;
+  const ppb = Math.max(28, Math.min(70, hitY / 6));
+  // octave guides
+  g.strokeStyle = col.line; g.lineWidth = 1;
+  for (let m = L.lo; m <= L.hi; m++) if (m % 12 === 0){ const r = geo.rect(m); g.beginPath(); g.moveTo(r.x, 0); g.lineTo(r.x, hitY); g.stroke(); }
+  // notes
+  for (let i = 0; i < steps.length; i++){
+    const s = steps[i], yb = hitY - (s.beat - offset) * ppb;
+    const h = Math.max(s.dur * ppb - 4, 14), yt = yb - h;
+    if (yt > hitY || yb < -4) continue;
+    for (const m of s.notes){
+      const r = geo.rect(m), pad = r.black ? 0 : r.w * 0.1;
+      g.globalAlpha = i < idx ? 0.35 : 1;
+      g.fillStyle = i < idx ? col.ok : (i === idx ? col.accent : col.accent);
+      if (i > idx) g.globalAlpha = Math.max(0.45, 1 - (i - idx) * 0.06);
+      g.beginPath(); g.roundRect(r.x + pad, yt, r.w - pad * 2, h, 4); g.fill();
+      if (i === idx){ g.globalAlpha = 1; g.strokeStyle = col.fg; g.lineWidth = 2; g.stroke(); }
+      g.globalAlpha = 1;
+    }
+  }
+  // hit line
+  g.strokeStyle = col.fg; g.globalAlpha = 0.5; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, hitY); g.lineTo(W, hitY); g.stroke(); g.globalAlpha = 1;
+  // keyboard: whites, then blacks
+  const cur = idx < steps.length ? new Set(steps[idx].notes) : new Set();
+  const lit = m => (hitAt[m] && now - hitAt[m] < 1500) || (simAt[m] && now - simAt[m] < 600);
+  const paintKey = m => {
+    const r = geo.rect(m), kh = r.black ? geo.kh * 0.62 : geo.kh;
+    g.fillStyle = r.black ? col.keyb : col.key;
+    g.fillRect(r.x, hitY, r.w, kh);
+    if (cur.has(m)){ g.fillStyle = lit(m) ? col.ok : col.accent; g.globalAlpha = lit(m) ? 1 : 0.55; g.fillRect(r.x, hitY, r.w, kh); g.globalAlpha = 1; }
+    g.strokeStyle = r.black ? col.keyb : col.muted; g.lineWidth = 1; g.strokeRect(r.x + .5, hitY + .5, r.w - 1, kh - 1);
+    if (!r.black && m % 12 === 0){ g.fillStyle = col.muted; g.font = '11px system-ui'; g.fillText(midiName(m), r.x + 3, hitY + kh - 5); }
+  };
+  for (let m = L.lo; m <= L.hi; m++) if (isWhite(m)) paintKey(m);
+  for (let m = L.lo; m <= L.hi; m++) if (!isWhite(m)) paintKey(m);
+  if (now - flashAt < 250 && idx > 0){
+    g.fillStyle = col.ok; g.globalAlpha = 0.18 * (1 - (now - flashAt) / 250); g.fillRect(0, 0, W, hitY); g.globalAlpha = 1;
+  }
+  requestAnimationFrame(draw);
+}
+
+/* tap on the on-screen keyboard = simulated key press */
+cv.addEventListener('pointerdown', e => {
+  const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  const geo = geometry(), hitY = H - geo.kh;
+  if (y < hitY) return;
+  let found = null;
+  for (let m = L.lo; m <= L.hi && found == null; m++){
+    if (isWhite(m)) continue;
+    const k = geo.rect(m);
+    if (x >= k.x && x <= k.x + k.w && y <= hitY + geo.kh * 0.62) found = m;
+  }
+  for (let m = L.lo; m <= L.hi && found == null; m++){
+    if (!isWhite(m)) continue;
+    const k = geo.rect(m);
+    if (x >= k.x && x <= k.x + k.w) found = m;
+  }
+  if (found != null) simAt[found] = performance.now();
+});
+
+/* ---------- Controls ---------- */
+$('micBtn').addEventListener('click', startMic);
+$('backBtn').addEventListener('click', () => goTo(idx - 1));
+$('skipBtn').addEventListener('click', () => goTo(idx + 1));
+$('restartBtn').addEventListener('click', () => goTo(0));
+function loadSteps(s){ setSteps(s); L = layout(); setMsg(''); }
+$('piece').addEventListener('change', () => {
+  const v = $('piece').value;
+  $('textPanel').hidden = v !== 'text';
+  $('midiPanel').hidden = v !== 'midi';
+  if (PRESETS[v]) loadSteps(parseText(PRESETS[v]));
+});
+$('applyText').addEventListener('click', () => {
+  try { loadSteps(parseText($('notesText').value)); } catch (e){ setMsg(e.message, true); }
+});
+function rebuildFromTracks(){
+  const picked = [...document.querySelectorAll('#tracks input:checked')].map(i => midiData.tracks[+i.value]);
+  if (!picked.length){ setMsg('Познач хоча б одну доріжку.', true); return; }
+  const s = stepsFromTracks(midiData.div, picked);
+  if (!s.length){ setMsg('У цих доріжках немає нот.', true); return; }
+  loadSteps(s);
+  if (s.length > 800) setMsg('Нот дуже багато (' + s.length + '). Краще вибрати одну руку.', true);
+}
+$('midiFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    midiData = parseMidi(await f.arrayBuffer());
+    if (!midiData.tracks.length) throw new Error('У файлі немає нот');
+    const box = $('tracks'); box.textContent = '';
+    midiData.tracks.forEach((t, i) => {
+      const lab = document.createElement('label'), cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = i; cb.checked = midiData.tracks.length === 1 || i === 0;
+      cb.addEventListener('change', rebuildFromTracks);
+      lab.append(cb, document.createTextNode(t.name + ' (' + t.notes.length + ' нот)'));
+      box.append(lab);
+    });
+    rebuildFromTracks();
+  } catch (err){ setMsg(err.message, true); }
+});
+
+/* ---------- Boot ---------- */
+resize(); updateUI(); offset = steps[0].beat;
+setMsg('Тапни по клавішах на екрані, щоб випробувати без мікрофона.');
+setInterval(() => { analyse(); checkStep(); }, 50);
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
